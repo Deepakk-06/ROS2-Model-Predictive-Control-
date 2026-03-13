@@ -1,9 +1,3 @@
-# MPC Navigation Stack — FloMobility Assignment
-
-> **Reference repo replaced:** [smoothing-rpp (Pure Pursuit)](https://github.com/manojkarnekar/smoothing-rpp)
-> **Replacement:** Model Predictive Control (MPC) tracker with smooth path generation and static/dynamic obstacle avoidance.
-
----
 
 ## Architecture
 
