@@ -17,7 +17,7 @@ import numpy as np
 from scipy.optimize import minimize
 import math
 
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Path, Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool
@@ -225,7 +225,7 @@ class MPCTrackerNode(Node):
         self.create_subscription(Odometry, "/odom", self.odom_cb, 10)
         self.create_subscription(LaserScan, "/scan", self.scan_cb, 10)
 
-        self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
+        self.cmd_pub = self.create_publisher(TwistStamped , "/cmd_vel", 10)
         self.status_pub = self.create_publisher(Bool, "/mpc/goal_reached", 10)
 
         freq = self.get_parameter("control_frequency").value
@@ -236,15 +236,31 @@ class MPCTrackerNode(Node):
     # ─────────────────────────── Callbacks ──────────────────────────────────
 
     def path_cb(self, msg: Path):
-        self.path_points = [
+        new_points = [
             [pose.pose.position.x, pose.pose.position.y]
             for pose in msg.poses
         ]
+
+        if len(new_points) == 0:
+            return
+
+        if self.path_points and len(new_points) == len(self.path_points):
+            old_goal = self.path_points[-1]
+            new_goal = new_points[-1]
+            same_goal = math.hypot(
+                old_goal[0] - new_goal[0],
+                old_goal[1] - new_goal[1],
+            ) < 1e-6
+
+            if same_goal:
+                self.path_points = new_points
+                return
+
+        self.path_points = new_points
         self.current_path_idx = 0
         self.goal_reached = False
         self.mpc.reset_warmstart()
         self.get_logger().info(f"New path received: {len(self.path_points)} points.")
-
     def odom_cb(self, msg: Odometry):
         pos = msg.pose.pose.position
         q = msg.pose.pose.orientation
@@ -321,24 +337,29 @@ class MPCTrackerNode(Node):
             self.obstacles_world,
         )
 
-        twist = Twist()
-        twist.linear.x = v_cmd
-        twist.angular.z = w_cmd
+        twist = TwistStamped()
+        twist.header.stamp = self.get_clock().now().to_msg()
+        twist.header.frame_id = "base_link"
+        twist.twist.linear.x=v_cmd
+        twist.twist.angular.z=w_cmd
         self.cmd_pub.publish(twist)
 
     def _advance_path_idx(self):
-        """Move path index forward past already-visited waypoints."""
-        look_ahead_dist = 0.2
-        while self.current_path_idx < len(self.path_points) - 1:
-            pt = self.path_points[self.current_path_idx]
+        search_end = min(self.current_path_idx + 40, len(self.path_points))
+        nearest_idx = self.current_path_idx
+        nearest_dist = float("inf")
+
+        for i in range(self.current_path_idx, search_end):
+            pt = self.path_points[i]
             d = math.hypot(
                 self.robot_pose[0] - pt[0],
                 self.robot_pose[1] - pt[1],
             )
-            if d < look_ahead_dist:
-                self.current_path_idx += 1
-            else:
-                break
+            if d < nearest_dist:
+                nearest_dist = d
+                nearest_idx = i
+
+        self.current_path_idx = max(self.current_path_idx, nearest_idx)
 
     def _build_reference(self):
         """
@@ -355,7 +376,10 @@ class MPCTrackerNode(Node):
         return ref
 
     def _publish_zero(self):
-        self.cmd_pub.publish(Twist())
+        twist=TwistStamped()
+        twist.header.stamp=self.get_clock().now().to_msg()
+        twist.header.frame_id="base_link"
+        self.cmd_pub.publish(twist)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
