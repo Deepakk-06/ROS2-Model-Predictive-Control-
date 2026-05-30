@@ -1,237 +1,229 @@
+# ROS 2 MPC Navigation for TurtleBot3
 
-## Architecture
+Model Predictive Control (MPC) path tracking for TurtleBot3 Burger using **ROS 2 Jazzy**, **Gazebo Sim**, and **RViz**.
+
+The robot reads waypoints from a CSV, smooths them into a spline path, then tracks it using nonlinear MPC — publishing `TwistStamped` velocity commands to TurtleBot3 in Gazebo Sim.
+
+## Demo
+
+[Watch MPC demo video](media/MPC.mov)
+
+![RViz demo 1](media/Screenshot%202026-05-30%20at%2012.05.28%E2%80%AFPM.png)
+![RViz demo 2](media/Screenshot%202026-05-30%20at%2012.52.51%E2%80%AFPM.png)
+
+---
+
+## Features
+
+- ROS 2 Jazzy + Gazebo Sim + RViz
+- TurtleBot3 Burger simulation
+- Cubic spline path smoothing from CSV waypoints
+- Nonlinear MPC trajectory tracking (SciPy SLSQP with warm starting)
+- Forward nearest-point tracking — robot does not reset to waypoint 0 on path republish
+- `/cmd_vel` published as `geometry_msgs/msg/TwistStamped` (Jazzy-compatible)
+- LaserScan-based obstacle awareness with soft-barrier cost
+- Optional dynamic obstacle spawning in Gazebo Sim
+
+---
+
+## Package Structure
 
 ```
-┌─────────────────┐
-│  waypoint.csv   │
-│  (raw points)   │
-└────────┬────────┘
-         │
-         ▼
-┌──────────────────────────────┐
-│     path_smoother.py         │
-│  - CubicSpline interpolation │
-│  - Uniform arc-length resamp │
-│  Publishes /path (green)     │
-│  Publishes /waypoints (red)  │
-└──────────┬───────────────────┘
-           │ /path
-           ▼
-┌──────────────────────────────┐
-│      mpc_tracker.py          │
-│  - Unicycle MPC (N=15 steps) │
-│  - SLSQP optimizer           │
-│  - Obstacle soft-barrier     │
-│  - Emergency stop (<0.35m)   │
-│  Subscribes /scan, /odom     │
-│  Publishes /cmd_vel          │
-└──────────────────────────────┘
-           │
-           ▼
-     TurtleBot3 (Gazebo)
-
-[Optional]
-┌──────────────────────────────┐
-│    obstacle_spawner.py       │
-│  Randomly spawns/removes     │
-│  Gazebo box obstacles in     │
-│  front of robot for testing  │
-└──────────────────────────────┘
+mpc_nav/
+├── launch/
+│   └── mpc_nav_bringup.py
+├── media/
+│   ├── MPC.mov
+│   └── screenshots/
+├── mpc_nav/
+│   ├── __init__.py
+│   ├── mpc_tracker.py
+│   ├── obstacle_spawner.py
+│   └── path_smoother.py
+├── waypoints/
+│   └── waypoint.csv
+├── package.xml
+├── setup.cfg
+└── setup.py
 ```
 
 ---
 
-## Task Checklist
+## System Architecture
 
-| # | Task | Implementation |
-|---|------|---------------|
-| 1 | Replace Pure Pursuit with MPC | `mpc_tracker.py` — `MPCController` class using SLSQP optimization over N=15 step horizon |
-| 2 | Generate smooth path from waypoints | `path_smoother.py` — CubicSpline with arc-length parameterization, 0.05 m resolution |
-| 3 | Manoeuvre around obstacles, return to path | Soft obstacle barrier in MPC cost function; robot naturally steers around and re-joins the reference trajectory |
-| 4 | Static **and** dynamic obstacles | Static: always in LiDAR; Dynamic: `obstacle_spawner.py` randomly spawns/removes boxes; both handled identically by MPC |
-
----
-
-## How It Works
-
-### 1. Path Smoothing (`path_smoother.py`)
-
-- Loads waypoints from CSV (`x,y` per line)
-- Computes cumulative arc-length parameter `t`
-- Fits **independent CubicSplines** `x(t)` and `y(t)` with `not-a-knot` boundary conditions (scipy)
-- Resamples uniformly at `path_resolution` (default 0.05 m)
-- Publishes smooth path on `/path` and raw waypoints on `/waypoints`
-
-### 2. MPC Tracker (`mpc_tracker.py`)
-
-**State:** `[x, y, θ]` (unicycle model)
-
-**Control inputs:** `[v, ω]` (linear and angular velocity)
-
-**Prediction:**
 ```
-x_{k+1} = x_k + v_k * cos(θ_k) * dt
-y_{k+1} = y_k + v_k * sin(θ_k) * dt
-θ_{k+1} = θ_k + ω_k * dt
+waypoints/waypoint.csv
+        │
+        ▼
+path_smoother.py  ──publishes──▶  /path, /waypoints
+        │
+        ▼
+mpc_tracker.py
+  ├── subscribes: /path, /odom, /scan
+  └── publishes:  /cmd_vel, /mpc/goal_reached
+        │
+        ▼
+TurtleBot3 Burger (Gazebo Sim)
 ```
-
-**MPC cost function (minimized at each step):**
-```
-J = Σ_{k=1}^{N} [
-      Q_pos * ||pos_k - ref_k||²
-    + Q_head * heading_error_k²
-    + R_v * v_k²
-    + R_w * ω_k²
-    + obs_weight * max(0, obs_margin - dist_to_obstacle)²  ← soft barrier
-  ]
-  + terminal_weight * ||pos_N - goal||²
-```
-
-**Constraints:**
-- `v ∈ [-0.05, 0.3]` m/s
-- `ω ∈ [-1.5, 1.5]` rad/s
-
-**Obstacle handling:**
-- LiDAR points within 2 m are converted to world-frame obstacle coordinates
-- Soft barrier penalty in MPC cost naturally steers the robot around obstacles
-- Emergency stop if any obstacle < 0.35 m in ±40° frontal cone
-- Once obstacle clears, robot naturally re-converges to reference path (no explicit replanning needed — MPC handles it)
-
-**Warm starting:** Previous optimal control sequence is shifted and reused as initial guess, reducing solve time.
-
----
-
-## Installation
-
-```bash
-# Prerequisites: ROS2 Humble, TurtleBot3 packages, Gazebo, Python 3
-pip install scipy numpy
-
-cd ~/ros2_ws/src
-git clone <this_repo> mpc_nav
-cd ~/ros2_ws
-colcon build --packages-select mpc_nav
-source install/setup.bash
-```
-
----
-
-## Usage
-
-### Run simulation with MPC tracker
-
-**Terminal 1 — Full bringup:**
-```bash
-export TURTLEBOT3_MODEL=burger
-ros2 launch mpc_nav mpc_nav_bringup.py
-```
-
-**Terminal 1 — With dynamic obstacles:**
-```bash
-ros2 launch mpc_nav mpc_nav_bringup.py spawn_obstacles:=true
-```
-
-### Run nodes manually
-
-**Terminal 1 — Simulation:**
-```bash
-export TURTLEBOT3_MODEL=burger
-ros2 launch turtlebot3_gazebo empty_world.launch.py
-```
-
-**Terminal 2 — Path smoother:**
-```bash
-ros2 run mpc_nav path_smoother --ros-args \
-  -p path_file:=$(pwd)/waypoints/waypoint.csv \
-  -p path_resolution:=0.05
-```
-
-**Terminal 3 — MPC tracker:**
-```bash
-ros2 run mpc_nav mpc_tracker --ros-args \
-  -p v_max:=0.3 \
-  -p horizon:=15 \
-  -p obs_weight:=100.0
-```
-
-**Terminal 4 (optional) — Dynamic obstacle spawner:**
-```bash
-ros2 run mpc_nav obstacle_spawner --ros-args \
-  -p spawn_interval:=10.0 \
-  -p obstacle_dist:=0.9
-```
-
----
-
-## Configuration Parameters
-
-### `path_smoother`
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `path_file` | `waypoints/waypoint.csv` | Path to waypoints CSV |
-| `path_resolution` | `0.05` m | Distance between smooth path points |
-| `frame_id` | `odom` | TF frame for published paths |
-| `publish_rate` | `1.0` Hz | How often to republish paths |
-
-### `mpc_tracker`
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `horizon` | `15` | MPC prediction horizon (steps) |
-| `dt` | `0.1` s | Prediction time step |
-| `v_max` | `0.3` m/s | Max linear velocity |
-| `w_max` | `1.5` rad/s | Max angular velocity |
-| `Q_pos` | `10.0` | Position tracking weight |
-| `Q_head` | `2.0` | Heading tracking weight |
-| `R_v` | `0.5` | Linear velocity effort weight |
-| `R_w` | `0.5` | Angular velocity effort weight |
-| `terminal_weight` | `20.0` | Terminal state cost weight |
-| `obs_weight` | `100.0` | Obstacle avoidance weight |
-| `obs_margin` | `0.45` m | Safety margin around obstacles |
-| `obstacle_stop_dist` | `0.35` m | Emergency stop distance |
-| `lidar_range_max` | `2.0` m | Only consider LiDAR points within this range |
-| `goal_tolerance` | `0.15` m | Goal reached threshold |
-| `control_frequency` | `10.0` Hz | MPC solve frequency |
-
----
-
-## ROS2 Topics
-
-| Topic | Type | Direction | Description |
-|-------|------|-----------|-------------|
-| `/path` | `nav_msgs/Path` | sub | Smooth trajectory from path_smoother |
-| `/waypoints` | `nav_msgs/Path` | sub | Raw waypoints (visualization) |
-| `/odom` | `nav_msgs/Odometry` | sub | Robot pose |
-| `/scan` | `sensor_msgs/LaserScan` | sub | 2D LiDAR data |
-| `/cmd_vel` | `geometry_msgs/Twist` | pub | Velocity commands to robot |
-| `/mpc/goal_reached` | `std_msgs/Bool` | pub | Goal reached notification |
-
----
-
-## Design Decisions
-
-**Why MPC over Pure Pursuit?**
-- MPC optimizes over a future horizon → smoother velocity profiles
-- Naturally handles constraints (velocity limits, obstacle margins)
-- Soft obstacle barrier in cost = smooth avoidance without hard replanning
-- Returns to original path automatically after obstacle clears
-
-**Why CubicSpline over Bézier?**
-- Arc-length parameterization gives truly uniform spacing
-- scipy's `CubicSpline` is C² continuous (smooth curvature)
-- Works with arbitrary numbers of waypoints
-
-**Why SLSQP?**
-- Handles box constraints (velocity bounds) efficiently
-- Fast convergence for smooth, well-conditioned MPC problems
-- Warm-starting further reduces solve time per iteration
 
 ---
 
 ## Dependencies
 
-- ROS2 Humble
-- `turtlebot3_*` packages
-- Gazebo Classic
-- Python: `numpy`, `scipy`
+Install ROS 2 Jazzy and TurtleBot3 packages:
+
+```bash
+sudo apt update
+sudo apt install \
+  ros-jazzy-turtlebot3 \
+  ros-jazzy-turtlebot3-gazebo \
+  ros-jazzy-ros-gz-sim \
+  ros-jazzy-rviz2 \
+  python3-numpy \
+  python3-scipy
+```
+
+If `turtlebot3_gazebo` is missing, build from source:
+
+```bash
+mkdir -p ~/turtlebot3_ws/src
+cd ~/turtlebot3_ws/src
+git clone -b jazzy https://github.com/ROBOTIS-GIT/turtlebot3_simulations.git
+cd ~/turtlebot3_ws
+source /opt/ros/jazzy/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install
+source install/setup.bash
+```
+
+---
+
+## Build
+
+```bash
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+git clone https://github.com/Deepakk-06/ROS2-Model-Predictive-Control-.git mpc_nav
+cd ~/ros2_ws
+source /opt/ros/jazzy/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install --packages-select mpc_nav
+source install/setup.bash
+```
+
+---
+
+## Run
+
+```bash
+cd ~/ros2_ws
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+export TURTLEBOT3_MODEL=burger
+ros2 launch mpc_nav mpc_nav_bringup.py
+```
+
+With optional dynamic obstacles:
+
+```bash
+ros2 launch mpc_nav mpc_nav_bringup.py spawn_obstacles:=true
+```
+
+---
+
+## RViz Setup
+
+Set **Fixed Frame** to `odom`.
+
+| Display    | Topic        | Style                          |
+|------------|--------------|--------------------------------|
+| Path       | `/path`      | Green line, width ~0.03        |
+| Path       | `/waypoints` | Yellow line, width ~0.03       |
+| LaserScan  | `/scan`      | Flat squares, size ~0.03       |
+| Odometry   | `/odom`      | Arrow display                  |
+
+> If RViz shows `Frame [map] does not exist`, go to **Global Options → Fixed Frame → odom**.
+
+---
+
+## ROS Topics
+
+| Topic               | Type                              | Direction         | Description              |
+|---------------------|-----------------------------------|-------------------|--------------------------|
+| `/path`             | `nav_msgs/msg/Path`               | smoother → tracker | Smoothed reference path  |
+| `/waypoints`        | `nav_msgs/msg/Path`               | smoother → RViz   | Raw waypoint path        |
+| `/odom`             | `nav_msgs/msg/Odometry`           | Gazebo → tracker  | Robot pose               |
+| `/scan`             | `sensor_msgs/msg/LaserScan`       | Gazebo → tracker  | LiDAR scan               |
+| `/cmd_vel`          | `geometry_msgs/msg/TwistStamped`  | tracker → Gazebo  | Velocity commands        |
+| `/mpc/goal_reached` | `std_msgs/msg/Bool`               | tracker → out     | Goal completion status   |
+
+---
+
+## MPC Details
+
+**Unicycle motion model:**
+
+```
+x[k+1]     = x[k] + v[k] * cos(θ[k]) * dt
+y[k+1]     = y[k] + v[k] * sin(θ[k]) * dt
+θ[k+1]     = θ[k] + ω[k] * dt
+```
+
+**Cost function minimizes:** position error + heading error + velocity effort + angular effort + obstacle soft-barrier + terminal goal error.
+
+**Tuned parameters** (set in `launch/mpc_nav_bringup.py`):
+
+| Parameter          | Value  | Purpose                        |
+|--------------------|--------|--------------------------------|
+| `v_max`            | 0.18   | Max forward speed              |
+| `v_min`            | -0.05  | Small reverse allowed          |
+| `w_max`            | 1.5    | Angular velocity limit         |
+| `horizon`          | 25     | MPC lookahead steps            |
+| `dt`               | 0.1    | Timestep (s)                   |
+| `Q_pos`            | 10.0   | Position tracking weight       |
+| `Q_head`           | 2.0    | Heading tracking weight        |
+| `R_v`              | 0.5    | Linear velocity effort weight  |
+| `R_w`              | 0.5    | Angular effort weight          |
+| `terminal_weight`  | 20.0   | Goal convergence weight        |
+| `obs_weight`       | 100.0  | Obstacle penalty               |
+| `obs_margin`       | 0.45   | Safety margin (m)              |
+| `goal_tolerance`   | 0.08   | Goal completion threshold (m)  |
+| `obstacle_stop_dist` | 0.12 | Emergency stop distance (m)   |
+| `control_frequency` | 10.0  | MPC loop rate (Hz)             |
+
+---
+
+## Key Jazzy Changes
+
+This package targets **ROS 2 Jazzy + Gazebo Sim** (not Humble/Gazebo Classic).
+
+- `/cmd_vel` published as `geometry_msgs/msg/TwistStamped` to match `ros_gz_bridge`
+- Fixed frame is `odom` (not `map`)
+- Path republication no longer resets robot to waypoint 0
+- Forward nearest-point search prevents backtracking on missed waypoints
+
+---
+
+## Debug Commands
+
+```bash
+# List active nodes and topics
+ros2 node list
+ros2 topic list
+
+# Verify /cmd_vel message type
+ros2 topic info /cmd_vel -v
+# Expected: geometry_msgs/msg/TwistStamped
+
+# Monitor key topics
+ros2 topic echo /cmd_vel --field twist
+ros2 topic echo /odom --field pose.pose.position
+ros2 topic echo /mpc/goal_reached
+ros2 topic hz /scan
+
+# Manual motion test (if robot is not moving)
+ros2 topic pub /cmd_vel geometry_msgs/msg/TwistStamped \
+  'twist: {linear: {x: 0.3}}' -r 10
+```
+
+> If `/odom` position changes after the manual test, Gazebo physics is working. RViz is visualization only — check `/odom` values if the robot appears stationary in Gazebo.
