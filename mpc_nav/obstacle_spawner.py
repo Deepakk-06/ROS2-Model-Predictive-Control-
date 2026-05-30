@@ -13,7 +13,9 @@ import rclpy
 from rclpy.node import Node
 import random
 import math
+import os
 import subprocess
+import tempfile
 import time
 from nav_msgs.msg import Odometry
 
@@ -52,14 +54,16 @@ class ObstacleSpawner(Node):
         self.declare_parameter("obstacle_dist", 0.8)    # m ahead of robot
         self.declare_parameter("remove_after", 6.0)     # seconds before removing
         self.declare_parameter("max_obstacles", 3)
+        self.declare_parameter("world_name", "default")
 
         self.spawn_interval = self.get_parameter("spawn_interval").value
         self.obs_dist = self.get_parameter("obstacle_dist").value
         self.remove_after = self.get_parameter("remove_after").value
         self.max_obs = self.get_parameter("max_obstacles").value
+        self.world_name = self.get_parameter("world_name").value
 
         self.robot_pose = None
-        self.active_obstacles = {}  # name -> spawn_time
+        self.active_obstacles = {}  # name -> (spawn_time, sdf_file)
         self.obs_counter = 0
 
         self.create_subscription(Odometry, "/odom", self.odom_cb, 10)
@@ -93,18 +97,23 @@ class ObstacleSpawner(Node):
         self.obs_counter += 1
 
         sdf = BOX_SDF_TEMPLATE.format(name=name, x=ox, y=oy)
-        sdf_file = f"/tmp/{name}.sdf"
+        sdf_fd, sdf_file = tempfile.mkstemp(
+            suffix=".sdf",
+            prefix=f"{name}_",
+        )
+        os.close(sdf_fd)
         with open(sdf_file, "w") as f:
             f.write(sdf)
 
         cmd = [
-            "ros2", "run", "gazebo_ros", "spawn_entity.py",
+            "ros2", "run", "ros_gz_sim", "create",
+            "-world", self.world_name,
             "-file", sdf_file,
-            "-entity", name,
+            "-name", name,
         ]
         try:
             subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.active_obstacles[name] = time.time()
+            self.active_obstacles[name] = (time.time(), sdf_file)
             self.get_logger().info(f"Spawned obstacle '{name}' at ({ox:.2f}, {oy:.2f})")
         except Exception as e:
             self.get_logger().warn(f"Failed to spawn obstacle: {e}")
@@ -112,17 +121,20 @@ class ObstacleSpawner(Node):
     def maybe_remove(self):
         now = time.time()
         to_remove = [
-            name for name, t in self.active_obstacles.items()
-            if now - t > self.remove_after
+            name for name, (spawn_time, _) in self.active_obstacles.items()
+            if now - spawn_time > self.remove_after
         ]
         for name in to_remove:
-            cmd = ["ros2", "service", "call",
-                   "/delete_entity", "gazebo_msgs/srv/DeleteEntity",
-                   f"{{name: '{name}'}}"]
+            _, sdf_file = self.active_obstacles[name]
+            cmd = ["ros2", "run", "ros_gz_sim", "delete_entity", "--name", name]
             try:
                 subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 del self.active_obstacles[name]
                 self.get_logger().info(f"Removed obstacle '{name}'")
+                try:
+                    os.unlink(sdf_file)
+                except OSError:
+                    pass
             except Exception as e:
                 self.get_logger().warn(f"Failed to remove obstacle: {e}")
 

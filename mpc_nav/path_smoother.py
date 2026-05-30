@@ -16,8 +16,8 @@ from rclpy.node import Node
 import numpy as np
 import csv
 import os
-import math
 
+from ament_index_python.packages import get_package_share_directory
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
 from scipy.interpolate import CubicSpline
@@ -36,9 +36,9 @@ class PathSmootherNode(Node):
         self.resolution = self.get_parameter("path_resolution").value
         self.frame_id = self.get_parameter("frame_id").value
 
-        # Expand relative paths relative to package
+        # Expand relative paths relative to the installed package share directory.
         if not os.path.isabs(path_file):
-            pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            pkg_dir = get_package_share_directory("mpc_nav")
             path_file = os.path.join(pkg_dir, path_file)
 
         self.raw_wp = self._load_waypoints(path_file)
@@ -50,7 +50,7 @@ class PathSmootherNode(Node):
         rate = self.get_parameter("publish_rate").value
         self.create_timer(1.0 / rate, self.publish_paths)
         self.get_logger().info(
-            f"Loaded {len(self.raw_wp)} waypoints → {len(self.smooth_path)} smooth points."
+            f"Loaded {len(self.raw_wp)} waypoints -> {len(self.smooth_path)} smooth points."
         )
 
     # ──────────────────────────────────────────────────────────────────────

@@ -15,16 +15,12 @@ import rclpy
 from rclpy.node import Node
 import numpy as np
 from scipy.optimize import minimize
-from collections import deque
 import math
 
-from geometry_msgs.msg import Twist, PoseStamped
+from geometry_msgs.msg import Twist
 from nav_msgs.msg import Path, Odometry
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool
-import tf2_ros
-from tf2_ros import TransformException
-from rclpy.duration import Duration
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -60,7 +56,7 @@ class MPCController:
                  + R_v * v^2 + R_w * w^2 ]
            + terminal_weight * dist_to_goal^2
 
-    Constraints: v ∈ [v_min, v_max], w ∈ [-w_max, w_max]
+    Constraints: v in [v_min, v_max], w in [-w_max, w_max]
     Obstacle penalty: soft barrier added to cost.
     """
 
@@ -140,9 +136,7 @@ class MPCController:
         if len(ref_path) == 0:
             return 0.0, 0.0
 
-        bounds = [(self.v_min, self.v_max)] * self.N + \
-                 [(-self.w_max, self.w_max)] * self.N
-        # Reorder to match u_flat structure: [v0,w0, v1,w1, ...]
+        # Match u_flat structure: [v0, w0, v1, w1, ...]
         bounds_interleaved = []
         for _ in range(self.N):
             bounds_interleaved.append((self.v_min, self.v_max))
@@ -159,7 +153,11 @@ class MPCController:
             options={"maxiter": 50, "ftol": 1e-4},
         )
 
-        u_opt = result.x.reshape((self.N, 2))
+        if result.success:
+            u_opt = result.x.reshape((self.N, 2))
+        else:
+            u_opt = self._prev_u.copy()
+
         # Warm-start: shift and pad
         self._prev_u = np.vstack([u_opt[1:], u_opt[-1:]])
 
@@ -179,7 +177,6 @@ class MPCTrackerNode(Node):
     def __init__(self):
         super().__init__("mpc_tracker")
 
-        # ── Parameters ──────────────────────────────────────────────────────
         self.declare_parameter("v_max", 0.3)
         self.declare_parameter("v_min", -0.05)
         self.declare_parameter("w_max", 1.5)
@@ -217,7 +214,6 @@ class MPCTrackerNode(Node):
 
         self.mpc = MPCController(p)
 
-        # ── State ───────────────────────────────────────────────────────────
         self.robot_pose = None          # [x, y, theta]
         self.path_points = []           # list of [x, y]
         self.current_path_idx = 0
@@ -225,20 +221,13 @@ class MPCTrackerNode(Node):
         self.goal_reached = False
         self.emergency_stop = False
 
-        # ── TF ──────────────────────────────────────────────────────────────
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
-
-        # ── Subscribers ─────────────────────────────────────────────────────
         self.create_subscription(Path, "/path", self.path_cb, 10)
         self.create_subscription(Odometry, "/odom", self.odom_cb, 10)
         self.create_subscription(LaserScan, "/scan", self.scan_cb, 10)
 
-        # ── Publishers ──────────────────────────────────────────────────────
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.status_pub = self.create_publisher(Bool, "/mpc/goal_reached", 10)
 
-        # ── Control timer ───────────────────────────────────────────────────
         freq = self.get_parameter("control_frequency").value
         self.create_timer(1.0 / freq, self.control_loop)
 
@@ -304,7 +293,6 @@ class MPCTrackerNode(Node):
             self._publish_zero()
             return
 
-        # ── Check goal ──────────────────────────────────────────────────────
         goal = self.path_points[-1]
         dist_to_goal = math.hypot(
             self.robot_pose[0] - goal[0],
@@ -317,27 +305,22 @@ class MPCTrackerNode(Node):
             self.get_logger().info("Goal reached!")
             return
 
-        # ── Emergency stop ───────────────────────────────────────────────────
         # (MPC with high obstacle weight will naturally steer away;
         #  emergency stop is a safety net for very close obstacles)
         if self.emergency_stop:
             self._publish_zero()
             return
 
-        # ── Advance path index ───────────────────────────────────────────────
         self._advance_path_idx()
 
-        # ── Build reference horizon ──────────────────────────────────────────
         ref = self._build_reference()
 
-        # ── Solve MPC ────────────────────────────────────────────────────────
         v_cmd, w_cmd = self.mpc.solve(
             self.robot_pose.copy(),
             ref,
             self.obstacles_world,
         )
 
-        # ── Publish ──────────────────────────────────────────────────────────
         twist = Twist()
         twist.linear.x = v_cmd
         twist.angular.z = w_cmd
