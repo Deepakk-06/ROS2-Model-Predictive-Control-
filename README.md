@@ -1,34 +1,55 @@
-# ROS 2 MPC Navigation for TurtleBot3
+<div align="center">
 
-Model Predictive Control (MPC) path tracking for TurtleBot3 Burger using **ROS 2 Jazzy**, **Gazebo Sim**, and **RViz**.
+# 🎯 ROS 2 MPC NAVIGATION
 
-The robot reads waypoints from a CSV, smooths them into a spline path, then tracks it using nonlinear MPC — publishing `TwistStamped` velocity commands to TurtleBot3 in Gazebo Sim.
+### Model Predictive Control path tracking for TurtleBot3 Burger
+**Waypoints in. Smooth spline out. Nonlinear MPC does the driving.**
 
-## Demo
+![ROS 2 Jazzy](https://img.shields.io/badge/ROS_2-JAZZY-C6FF00?style=for-the-badge&labelColor=0a0a0c)
+![Gazebo Sim](https://img.shields.io/badge/GAZEBO-SIM-FF40A0?style=for-the-badge&labelColor=0a0a0c)
+![TurtleBot3](https://img.shields.io/badge/TURTLEBOT3-BURGER-555?style=for-the-badge&labelColor=0a0a0c)
 
-[Watch MPC demo video](media/MPC.mov)
+![Python](https://img.shields.io/badge/Python-0a0a0c?style=flat-square&logo=python&logoColor=3776AB)
+![SciPy](https://img.shields.io/badge/SciPy_SLSQP-0a0a0c?style=flat-square&logo=scipy&logoColor=8CAAE6)
+![NumPy](https://img.shields.io/badge/NumPy-0a0a0c?style=flat-square&logo=numpy&logoColor=013243)
+![RViz](https://img.shields.io/badge/RViz-0a0a0c?style=flat-square&logo=ros&logoColor=white)
+
+</div>
+
+---
+
+Model Predictive Control (MPC) path tracking for **TurtleBot3 Burger** using
+**ROS 2 Jazzy**, **Gazebo Sim** and **RViz**.
+
+The robot reads waypoints from a CSV, smooths them into a spline path, then
+tracks it using nonlinear MPC, publishing `TwistStamped` velocity commands to
+TurtleBot3 in Gazebo Sim.
+
+## 🎬 Demo
+
+📹 **[Watch the MPC demo video](media/MPC.mov)**
 
 ![RViz demo 1](media/Screenshot%202026-05-30%20at%2012.05.28%E2%80%AFPM.png)
 ![RViz demo 2](media/Screenshot%202026-05-30%20at%2012.52.51%E2%80%AFPM.png)
 
 ---
 
-## Features
+## ⚡ Features
 
-- ROS 2 Jazzy + Gazebo Sim + RViz
-- TurtleBot3 Burger simulation
-- Cubic spline path smoothing from CSV waypoints
-- Nonlinear MPC trajectory tracking (SciPy SLSQP with warm starting)
-- Forward nearest-point tracking — robot does not reset to waypoint 0 on path republish
-- `/cmd_vel` published as `geometry_msgs/msg/TwistStamped` (Jazzy-compatible)
-- LaserScan-based obstacle awareness with soft-barrier cost
-- Optional dynamic obstacle spawning in Gazebo Sim
+- 🤖 ROS 2 Jazzy + Gazebo Sim + RViz
+- 🐢 TurtleBot3 Burger simulation
+- 〰️ Cubic spline path smoothing from CSV waypoints
+- 🧮 Nonlinear MPC trajectory tracking (SciPy SLSQP with warm starting)
+- ➡️ Forward nearest-point tracking: the robot does not reset to waypoint 0 on path republish
+- 📡 `/cmd_vel` published as `geometry_msgs/msg/TwistStamped` (Jazzy-compatible)
+- 🚧 LaserScan-based obstacle awareness with soft-barrier cost
+- 🧱 Optional dynamic obstacle spawning in Gazebo Sim
 
 ---
 
-## Package Structure
+## 📁 Package structure
 
-```
+```text
 mpc_nav/
 ├── launch/
 │   └── mpc_nav_bringup.py
@@ -49,9 +70,20 @@ mpc_nav/
 
 ---
 
-## System Architecture
+## 🏗️ System architecture
 
+```mermaid
+flowchart TD
+    CSV["📄 waypoints/waypoint.csv"] --> SM["〰️ path_smoother.py"]
+    SM -- "/path" --> MPC
+    SM -- "/waypoints" --> RVIZ["🖥️ RViz"]
+    ODOM["📍 /odom"] --> MPC
+    SCAN["📡 /scan"] --> MPC
+    MPC["🧮 mpc_tracker.py"] -- "/cmd_vel" --> TB["🐢 TurtleBot3 Burger<br/>Gazebo Sim"]
+    MPC -- "/mpc/goal_reached" --> OUT["✅ Goal status"]
 ```
+
+```text
 waypoints/waypoint.csv
         │
         ▼
@@ -68,9 +100,9 @@ TurtleBot3 Burger (Gazebo Sim)
 
 ---
 
-## Dependencies
+## 📦 Dependencies
 
-Install ROS 2 Jazzy and TurtleBot3 packages:
+Install ROS 2 Jazzy and the TurtleBot3 packages:
 
 ```bash
 sudo apt update
@@ -98,7 +130,7 @@ source install/setup.bash
 
 ---
 
-## Build
+## 🔨 Build
 
 ```bash
 mkdir -p ~/ros2_ws/src
@@ -113,7 +145,7 @@ source install/setup.bash
 
 ---
 
-## Run
+## 🚀 Run
 
 ```bash
 cd ~/ros2_ws
@@ -131,80 +163,83 @@ ros2 launch mpc_nav mpc_nav_bringup.py spawn_obstacles:=true
 
 ---
 
-## RViz Setup
+## 🖥️ RViz setup
 
 Set **Fixed Frame** to `odom`.
 
-| Display    | Topic        | Style                          |
-|------------|--------------|--------------------------------|
-| Path       | `/path`      | Green line, width ~0.03        |
-| Path       | `/waypoints` | Yellow line, width ~0.03       |
-| LaserScan  | `/scan`      | Flat squares, size ~0.03       |
-| Odometry   | `/odom`      | Arrow display                  |
+| Display | Topic | Style |
+| --- | --- | --- |
+| Path | `/path` | Green line, width ~0.03 |
+| Path | `/waypoints` | Yellow line, width ~0.03 |
+| LaserScan | `/scan` | Flat squares, size ~0.03 |
+| Odometry | `/odom` | Arrow display |
 
 > If RViz shows `Frame [map] does not exist`, go to **Global Options → Fixed Frame → odom**.
 
 ---
 
-## ROS Topics
+## 📡 ROS topics
 
-| Topic               | Type                              | Direction         | Description              |
-|---------------------|-----------------------------------|-------------------|--------------------------|
-| `/path`             | `nav_msgs/msg/Path`               | smoother → tracker | Smoothed reference path  |
-| `/waypoints`        | `nav_msgs/msg/Path`               | smoother → RViz   | Raw waypoint path        |
-| `/odom`             | `nav_msgs/msg/Odometry`           | Gazebo → tracker  | Robot pose               |
-| `/scan`             | `sensor_msgs/msg/LaserScan`       | Gazebo → tracker  | LiDAR scan               |
-| `/cmd_vel`          | `geometry_msgs/msg/TwistStamped`  | tracker → Gazebo  | Velocity commands        |
-| `/mpc/goal_reached` | `std_msgs/msg/Bool`               | tracker → out     | Goal completion status   |
+| Topic | Type | Direction | Description |
+| --- | --- | --- | --- |
+| `/path` | `nav_msgs/msg/Path` | smoother → tracker | Smoothed reference path |
+| `/waypoints` | `nav_msgs/msg/Path` | smoother → RViz | Raw waypoint path |
+| `/odom` | `nav_msgs/msg/Odometry` | Gazebo → tracker | Robot pose |
+| `/scan` | `sensor_msgs/msg/LaserScan` | Gazebo → tracker | LiDAR scan |
+| `/cmd_vel` | `geometry_msgs/msg/TwistStamped` | tracker → Gazebo | Velocity commands |
+| `/mpc/goal_reached` | `std_msgs/msg/Bool` | tracker → out | Goal completion status |
 
 ---
 
-## MPC Details
+## 🧮 MPC details
 
 **Unicycle motion model:**
 
-```
-x[k+1]     = x[k] + v[k] * cos(θ[k]) * dt
-y[k+1]     = y[k] + v[k] * sin(θ[k]) * dt
-θ[k+1]     = θ[k] + ω[k] * dt
-```
+$$
+\begin{aligned}
+x_{k+1} &= x_k + v_k \cos\theta_k \, dt \\
+y_{k+1} &= y_k + v_k \sin\theta_k \, dt \\
+\theta_{k+1} &= \theta_k + \omega_k \, dt
+\end{aligned}
+$$
 
-**Cost function minimizes:** position error + heading error + velocity effort + angular effort + obstacle soft-barrier + terminal goal error.
+**The cost function minimizes:** position error + heading error + velocity
+effort + angular effort + obstacle soft-barrier + terminal goal error.
 
 **Tuned parameters** (set in `launch/mpc_nav_bringup.py`):
 
-| Parameter          | Value  | Purpose                        |
-|--------------------|--------|--------------------------------|
-| `v_max`            | 0.18   | Max forward speed              |
-| `v_min`            | -0.05  | Small reverse allowed          |
-| `w_max`            | 1.5    | Angular velocity limit         |
-| `horizon`          | 25     | MPC lookahead steps            |
-| `dt`               | 0.1    | Timestep (s)                   |
-| `Q_pos`            | 10.0   | Position tracking weight       |
-| `Q_head`           | 2.0    | Heading tracking weight        |
-| `R_v`              | 0.5    | Linear velocity effort weight  |
-| `R_w`              | 0.5    | Angular effort weight          |
-| `terminal_weight`  | 20.0   | Goal convergence weight        |
-| `obs_weight`       | 100.0  | Obstacle penalty               |
-| `obs_margin`       | 0.45   | Safety margin (m)              |
-| `goal_tolerance`   | 0.08   | Goal completion threshold (m)  |
-| `obstacle_stop_dist` | 0.12 | Emergency stop distance (m)   |
-| `control_frequency` | 10.0  | MPC loop rate (Hz)             |
+| Parameter | Value | Purpose |
+| --- | --- | --- |
+| `v_max` | 0.18 | Max forward speed |
+| `v_min` | -0.05 | Small reverse allowed |
+| `w_max` | 1.5 | Angular velocity limit |
+| `horizon` | 25 | MPC lookahead steps |
+| `dt` | 0.1 | Timestep (s) |
+| `Q_pos` | 10.0 | Position tracking weight |
+| `Q_head` | 2.0 | Heading tracking weight |
+| `R_v` | 0.5 | Linear velocity effort weight |
+| `R_w` | 0.5 | Angular effort weight |
+| `terminal_weight` | 20.0 | Goal convergence weight |
+| `obs_weight` | 100.0 | Obstacle penalty |
+| `obs_margin` | 0.45 | Safety margin (m) |
+| `goal_tolerance` | 0.08 | Goal completion threshold (m) |
+| `obstacle_stop_dist` | 0.12 | Emergency stop distance (m) |
+| `control_frequency` | 10.0 | MPC loop rate (Hz) |
 
 ---
 
-## Key Jazzy Changes
+## 🔄 Key Jazzy changes
 
-This package targets **ROS 2 Jazzy + Gazebo Sim** (not Humble/Gazebo Classic).
+This package targets **ROS 2 Jazzy + Gazebo Sim** (not Humble / Gazebo Classic).
 
-- `/cmd_vel` published as `geometry_msgs/msg/TwistStamped` to match `ros_gz_bridge`
+- `/cmd_vel` is published as `geometry_msgs/msg/TwistStamped` to match `ros_gz_bridge`
 - Fixed frame is `odom` (not `map`)
-- Path republication no longer resets robot to waypoint 0
+- Path republication no longer resets the robot to waypoint 0
 - Forward nearest-point search prevents backtracking on missed waypoints
 
 ---
 
-## Debug Commands
+## 🐛 Debug commands
 
 ```bash
 # List active nodes and topics
@@ -221,9 +256,19 @@ ros2 topic echo /odom --field pose.pose.position
 ros2 topic echo /mpc/goal_reached
 ros2 topic hz /scan
 
-# Manual motion test (if robot is not moving)
+# Manual motion test (if the robot is not moving)
 ros2 topic pub /cmd_vel geometry_msgs/msg/TwistStamped \
   'twist: {linear: {x: 0.3}}' -r 10
 ```
 
-> If `/odom` position changes after the manual test, Gazebo physics is working. RViz is visualization only — check `/odom` values if the robot appears stationary in Gazebo.
+> If `/odom` position changes after the manual test, Gazebo physics is working.
+> RViz is visualization only, so check `/odom` values if the robot appears
+> stationary in Gazebo.
+
+---
+
+<div align="center">
+
+**Waypoints in. Smooth path out. Optimal control, 10 times a second.** 🎯
+
+</div>
